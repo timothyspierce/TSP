@@ -1,0 +1,1775 @@
+---
+title: "FinalFile_AllData"
+author: "Tim Pierce"
+date: "6/28/2022"
+output: html_document
+---
+
+```{r setup, include=FALSE}
+knitr::opts_chunk$set(echo = TRUE,
+                      warning = FALSE,
+                      message = FALSE,
+                      eval = TRUE)
+
+```
+
+```{r load packages}
+library(tidyverse)
+library(tidycensus)
+library(kableExtra)
+library(readr)
+library(sf)
+library(readxl)
+library(stats)
+library(stargazer)
+library(gridExtra)
+library(scales)
+library(writexl)
+library(summarytools)
+library(knitr)
+library(rmarkdown)
+library(stats)
+library(ggpubr)
+library(summarytools)
+library(sjPlot)
+library(vtable)
+library(ppcor)
+library(ggcorrplot)
+
+```
+
+```{r designate2012Variables}
+#SDV2012 stands for Social Development Variables 2012
+SDV2012 <- c(
+      disability = "S1810_C03_001", 
+      healthcare = "S2701_C03_001",
+      oldAge = "S0101_C01_033",
+      YouthDepend = "S0101_C01_034",
+      malePop = "S0101_C02_001",
+      femalePop = "S0101_C03_001",
+      BAdegreePlus = "S1501_C02_015",
+      lessThanHS = "S1501_C02_007",
+      lessThanHSdiploma = "S1501_C02_008",
+      ownerNum = "S2502_C02_001",
+      homesTotal = "S2502_C01_001",
+      Pct21stA = "S2504_C01_009",
+      Pct21stB = "S2504_C01_010",
+      Gini = "B19083_001",
+      lang2nd = "S1601_C01_003",
+      belowPoverty = "S1701_C03_001",
+      allJobs = "S2401_C01_001",
+      blueCollarA = "S2401_C01_029",
+      blueCollarB = "S2401_C01_033",
+      twoIncomes = "S2302_C02_003",
+      singleParent = "S2302_C02_007",
+      allHouseholds = "S2302_C02_001")
+```
+
+```{r designate2019variables}
+#SDV2019 stands for Social Development Variables 2019
+SDV2019 <-c(
+      disability = "S1810_C03_001", 
+      healthcare = "S2701_C03_001",
+      oldAge = "S0101_C01_035", 
+      YouthDepend = "S0101_C01_036", 
+      malePop = "S0101_C03_001", 
+      femalePop = "S0101_C05_001", 
+      BAdegreePlus = "S1501_C02_015", 
+      lessThanHS = "S1501_C02_007", 
+      lessThanHSdiploma = "S1501_C02_008", 
+      ownerNum = "S2502_C03_001", 
+      homesTotal = "S2502_C01_001",
+      Pct21stA = "S2504_C02_009", 
+      Pct21stB = "S2504_C02_010", 
+      Pct21stC = "S2504_C02_011", 
+      Gini = "B19083_001", 
+      lang2nd = "S1601_C02_003",  
+      belowPoverty = "S1701_C03_001", 
+      allJobs = "S2401_C01_001", 
+      blueCollarA = "S2401_C01_029", 
+      blueCollarB = "S2401_C01_033",  
+      twoIncomes = "S2302_C02_003",  
+      singleParent = "S2302_C01_007", 
+      allHouseholds = "S2302_C01_001") 
+```
+
+```{r importAppData}
+#Read in list of counties in Appalachia
+counties <-read.csv("ALMV_counties_all.csv", header=T)%>%
+  rename(state_code=State) %>% 
+  mutate(County=str_replace_all(County,"\'|\\.","")) %>%
+  mutate(County=str_trim(County, side="both")) 
+
+counties$state_code=as.character(counties$state_code)
+statesList<-unique(counties$state_code)
+
+#Read in list of fips codes and clean up data
+fips<-read.csv("fips_codes.csv", header=T) %>%
+  mutate(state_code= str_sub(FIPS, 1, -4))%>%
+  rename(County=Name)
+
+
+#Merge our list of counties with the list of fips codes
+fips_merge<-left_join(counties, fips, by=c("County", "state_code"))
+
+#coerce the fips codes that begin with "0" to maintain the "0" at the beginning (this is Alabama specifically, for our data)
+fipsList<-sprintf("%05d",fips_merge$FIPS)
+
+
+# Importing shape files for Appalachia 
+ShapeFiles <- get_acs(geography = "county",
+    state = statesList,
+# This is just a random variable for the sake of driving the function, we're just after the shapefile. There's a better way to do this, but the best way is the way you already know.
+    variables = "S1501_C02_015",
+#We designate 2019 for consistency throughout the project, although omitting the year from this command will pull the most up-to-date ACS 5-year data available.
+    year = 2019,
+    survey = "acs5",
+    cache_table = T,
+    geometry = T) %>% 
+#Filtering out counties that do not belong to Appalachia, then filtering out everything but the name, fips code, and shape data.
+  filter(GEOID %in% fipsList) %>% 
+  dplyr::select(GEOID, NAME, geometry)
+
+saveRDS(ShapeFiles, "ShapeFiles.rds")
+
+rucc <- read_excel("rucc2013.xls")[,c(1,5)] %>%
+  rename(rucc = RUCC_2013,
+         GEOID = FIPS) 
+
+```
+
+```{r importACSdata}
+SDD2012 <- get_acs(geography = "county",
+    state = statesList,
+    variables = SDV2012,
+    year = 2012,
+    survey = "acs5",
+    cache_table = T,
+    geometry = F) %>% 
+  filter(GEOID %in% fipsList) 
+
+SDD2019 <- get_acs(geography = "county",
+    state = statesList,
+    variables = SDV2019,
+    year = 2019,
+    survey = "acs5",
+    cache_table = T,
+    geometry = F) %>% 
+  filter(GEOID %in% fipsList) 
+```
+
+```{r wrangleACSdata}
+#This chunk imports equivalent datasets for the 2012 ACS5 and the 2019 ACS5, converts variables equivalently, and converts them to wide format and long format
+
+SDD2012 %>% 
+#Remove MOE column for ease of operation  
+  dplyr::select(-moe) %>%
+#Pivoting wider is a necessary evil for creating new variables
+  pivot_wider(names_from = variable, values_from = estimate) %>% 
+#Find percent of males in each county  
+  mutate(percentMale = (100*(malePop)/(malePop + femalePop))) %>% 
+#Remove male and female population variables from dataset now that they're no longer needed 
+  dplyr::select(-c(malePop, femalePop)) %>% 
+  mutate(ability = (100-disability),
+         HSorLess = lessThanHS + lessThanHSdiploma,
+         OwnerPct = 100*(ownerNum/homesTotal),
+         Pct21st = Pct21stA + Pct21stB,
+         singleParent = 100*(singleParent/allHouseholds),
+         blueCollar = 100*(blueCollarA + blueCollarB)/allJobs) %>% 
+         mutate_all(~replace(., is.na(.), 0)) %>% 
+         dplyr::select(-c(lessThanHS, 
+                   disability,
+                   lessThanHSdiploma, 
+                   ownerNum, 
+                   homesTotal, 
+                   Pct21stA, 
+                   Pct21stB, 
+                   allHouseholds,
+                   allJobs, 
+                   blueCollarA, 
+                   blueCollarB)) %>% 
+    mutate(state = str_sub(GEOID, 1, 2)) -> SDD2012Wide
+
+SDD2012Wide %>% 
+   pivot_longer(cols = Gini:blueCollar, 
+                values_to = "estimate", 
+                names_to= "variable") -> SDD2012Long
+SDD2019 %>% 
+  #Remove MOE column for ease of operation  
+  dplyr::select(-moe) %>%
+#Pivoting wider is a necessary evil for creating new variables
+  pivot_wider(names_from = variable, values_from = estimate) %>% 
+  #Find percent of males in each county  
+  mutate(percentMale = (100*(malePop)/(malePop + femalePop))) %>% 
+#Remove male and female population variables from dataset now that they're no longer needed 
+  dplyr::select(-c(malePop, femalePop)) %>% 
+
+  mutate(ability = (100-disability),
+         HSorLess = lessThanHS + lessThanHSdiploma,
+         OwnerPct = 100*(ownerNum/homesTotal),
+         Pct21st = (Pct21stA + Pct21stB + Pct21stC),
+         singleParent = 100*(singleParent/allHouseholds),
+         blueCollar = 100*(blueCollarA + blueCollarB)/allJobs) %>% 
+  dplyr::select(-c(disability, 
+            lessThanHS, 
+            lessThanHSdiploma, 
+            ownerNum, 
+            homesTotal, 
+            allHouseholds, 
+            blueCollarA, 
+            blueCollarB, 
+            allJobs,
+            Pct21stA, 
+            Pct21stB, 
+            Pct21stC))  %>% 
+    mutate(state = str_sub(GEOID, 1, 2)) -> SDD2019Wide
+
+SDD2019Wide %>% 
+   pivot_longer(cols = Gini:blueCollar, 
+                values_to = "estimate", 
+                names_to= "variable")  -> SDD2019Long
+```
+
+```{r summaryStats}
+SDD2012Long %>%
+  group_by(variable) %>% 
+  summarise(n=n_distinct(variable),
+            min = min(estimate),
+            q1 = quantile(estimate, 0.25),
+            med = median(estimate),
+            mean = mean(estimate),
+            q3 = quantile(estimate, 0.75),
+            max = max(estimate),
+            sd = sd(estimate),
+            IQR = quantile(estimate, 0.75)-quantile(estimate, 0.25),
+            range = max(estimate)-min(estimate)) %>% 
+  ungroup() %>% 
+  dplyr::select(-2) %>% 
+  distinct() %>% 
+  kbl(digits = 2) %>% kable_styling() -> SDD2012summaryStats
+
+SDD2019Long %>%
+  group_by(variable) %>% 
+  summarise(n=n_distinct(variable),
+            min = min(estimate),
+            q1 = quantile(estimate, 0.25),
+            med = median(estimate),
+            mean = mean(estimate),
+            q3 = quantile(estimate, 0.75),
+            max = max(estimate),
+            sd = sd(estimate),
+            IQR = quantile(estimate, 0.75)-quantile(estimate, 0.25),
+            range = max(estimate)-min(estimate)) %>% 
+  ungroup() %>% 
+  dplyr::select(-2) %>% 
+  distinct() %>% 
+  kbl(digits = 2) %>% kable_styling() -> SDD2019summaryStats
+```
+
+```{r recessionData}
+q1_2003 <- read_excel("employmentData/allhlcn031.xlsx") %>% 
+     mutate(GEOID = paste0(St, Cnty, "")) %>% 
+     filter(GEOID %in% fipsList) %>% 
+     filter(Ownership == "Total Covered") %>% 
+     dplyr::select(c(22, 15, 16, 17)) 
+q2_2003 <- read_excel("employmentData/allhlcn032.xlsx") %>%   
+     mutate(GEOID = paste0(St, Cnty, "")) %>% 
+     filter(GEOID %in% fipsList) %>% 
+     filter(Ownership == "Total Covered") %>% 
+     dplyr::select(c(22, 15, 16, 17)) 
+q3_2003 <- read_excel("employmentData/allhlcn033.xlsx")  %>%   
+     mutate(GEOID = paste0(St, Cnty, "")) %>% 
+     filter(GEOID %in% fipsList) %>% 
+     filter(Ownership == "Total Covered") %>% 
+     dplyr::select(c(22, 15, 16, 17)) 
+q4_2003 <- read_excel("employmentData/allhlcn034.xlsx") %>%   
+     mutate(GEOID = paste0(St, Cnty, "")) %>% 
+     filter(GEOID %in% fipsList) %>% 
+     filter(Ownership == "Total Covered") %>% 
+     dplyr::select(c(22, 15, 16, 17)) 
+
+emp2003 <- q1_2003 %>% 
+  inner_join(.,q2_2003, by = "GEOID") %>% 
+  inner_join(.,q3_2003, by = "GEOID") %>% 
+  inner_join(.,q4_2003, by = "GEOID")
+
+colnames(emp2003) <- paste(colnames(emp2003), "2003", sep="_")
+emp2003 <- emp2003 %>% 
+  rename("GEOID" = "GEOID_2003")
+
+
+q1_2004 <- read_excel("employmentData/allhlcn041.xlsx") %>% 
+     mutate(GEOID = paste0(St, Cnty, "")) %>% 
+     filter(GEOID %in% fipsList) %>% 
+     filter(Ownership == "Total Covered") %>% 
+     dplyr::select(c(22, 15, 16, 17)) 
+q2_2004 <- read_excel("employmentData/allhlcn042.xlsx") %>%   
+     mutate(GEOID = paste0(St, Cnty, "")) %>% 
+     filter(GEOID %in% fipsList) %>% 
+     filter(Ownership == "Total Covered") %>% 
+     dplyr::select(c(22, 15, 16, 17)) 
+q3_2004 <- read_excel("employmentData/allhlcn043.xlsx")  %>%   
+     mutate(GEOID = paste0(St, Cnty, "")) %>% 
+     filter(GEOID %in% fipsList) %>% 
+     filter(Ownership == "Total Covered") %>% 
+     dplyr::select(c(22, 15, 16, 17)) 
+q4_2004 <- read_excel("employmentData/allhlcn044.xlsx") %>%   
+     mutate(GEOID = paste0(St, Cnty, "")) %>% 
+     filter(GEOID %in% fipsList) %>% 
+     filter(Ownership == "Total Covered") %>% 
+     dplyr::select(c(22, 15, 16, 17)) 
+
+emp2004 <- q1_2004 %>% 
+  inner_join(.,q2_2004, by = "GEOID") %>% 
+  inner_join(.,q3_2004, by = "GEOID") %>% 
+  inner_join(.,q4_2004, by = "GEOID") 
+
+colnames(emp2004) <- paste(colnames(emp2004), "2004", sep="_")
+emp2004 <- emp2004 %>% 
+  rename("GEOID" = "GEOID_2004")
+
+
+
+#2005
+q1_2005 <- read_excel("employmentData/allhlcn051.xlsx") %>% 
+     mutate(GEOID = paste0(St, Cnty, "")) %>% 
+     filter(GEOID %in% fipsList) %>% 
+     filter(Ownership == "Total Covered") %>% 
+     dplyr::select(c(22, 15, 16, 17)) 
+q2_2005 <- read_excel("employmentData/allhlcn052.xlsx") %>%   
+     mutate(GEOID = paste0(St, Cnty, "")) %>% 
+     filter(GEOID %in% fipsList) %>% 
+     filter(Ownership == "Total Covered") %>% 
+     dplyr::select(c(22, 15, 16, 17)) 
+q3_2005 <- read_excel("employmentData/allhlcn053.xlsx")  %>%   
+     mutate(GEOID = paste0(St, Cnty, "")) %>% 
+     filter(GEOID %in% fipsList) %>% 
+     filter(Ownership == "Total Covered") %>% 
+     dplyr::select(c(22, 15, 16, 17)) 
+q4_2005 <- read_excel("employmentData/allhlcn054.xlsx") %>%   
+     mutate(GEOID = paste0(St, Cnty, "")) %>% 
+     filter(GEOID %in% fipsList) %>% 
+     filter(Ownership == "Total Covered") %>% 
+     dplyr::select(c(22, 15, 16, 17)) 
+
+emp2005 <- q1_2005 %>% 
+  inner_join(.,q2_2005, by = "GEOID") %>% 
+  inner_join(.,q3_2005, by = "GEOID") %>% 
+  inner_join(.,q4_2005, by = "GEOID")
+
+colnames(emp2005) <- paste(colnames(emp2005), "2005", sep="_")
+emp2005 <- emp2005 %>% 
+  rename("GEOID" = "GEOID_2005")
+
+
+#2006
+q1_2006 <- read_excel("employmentData/allhlcn061.xlsx") %>% 
+     mutate(GEOID = paste0(St, Cnty, "")) %>% 
+     filter(GEOID %in% fipsList) %>% 
+     filter(Ownership == "Total Covered") %>% 
+     dplyr::select(c(22, 15, 16, 17)) 
+q2_2006 <- read_excel("employmentData/allhlcn062.xlsx") %>%   
+     mutate(GEOID = paste0(St, Cnty, "")) %>% 
+     filter(GEOID %in% fipsList) %>% 
+     filter(Ownership == "Total Covered") %>% 
+     dplyr::select(c(22, 15, 16, 17)) 
+q3_2006 <- read_excel("employmentData/allhlcn063.xlsx")  %>%   
+     mutate(GEOID = paste0(St, Cnty, "")) %>% 
+     filter(GEOID %in% fipsList) %>% 
+     filter(Ownership == "Total Covered") %>% 
+     dplyr::select(c(22, 15, 16, 17)) 
+q4_2006 <- read_excel("employmentData/allhlcn064.xlsx") %>%   
+     mutate(GEOID = paste0(St, Cnty, "")) %>% 
+     filter(GEOID %in% fipsList) %>% 
+     filter(Ownership == "Total Covered") %>% 
+     dplyr::select(c(22, 15, 16, 17)) 
+
+emp2006 <- q1_2006 %>% 
+  inner_join(.,q2_2006, by = "GEOID") %>% 
+  inner_join(.,q3_2006, by = "GEOID") %>% 
+  inner_join(.,q4_2006, by = "GEOID") 
+
+colnames(emp2006) <- paste(colnames(emp2006), "2006", sep="_")
+emp2006 <- emp2006 %>% 
+  rename("GEOID" = "GEOID_2006")
+
+
+#2007
+q1_2007 <- read_excel("employmentData/allhlcn071.xlsx") %>% 
+     mutate(GEOID = paste0(St, Cnty, "")) %>% 
+     filter(GEOID %in% fipsList) %>% 
+     filter(Ownership == "Total Covered") %>% 
+     dplyr::select(c(22, 15, 16, 17)) 
+q2_2007 <- read_excel("employmentData/allhlcn072.xlsx") %>%   
+     mutate(GEOID = paste0(St, Cnty, "")) %>% 
+     filter(GEOID %in% fipsList) %>% 
+     filter(Ownership == "Total Covered") %>% 
+     dplyr::select(c(22, 15, 16, 17)) 
+q3_2007 <- read_excel("employmentData/allhlcn073.xlsx")  %>%   
+     mutate(GEOID = paste0(St, Cnty, "")) %>% 
+     filter(GEOID %in% fipsList) %>% 
+     filter(Ownership == "Total Covered") %>% 
+     dplyr::select(c(22, 15, 16, 17)) 
+q4_2007 <- read_excel("employmentData/allhlcn074.xlsx") %>%   
+     mutate(GEOID = paste0(St, Cnty, "")) %>% 
+     filter(GEOID %in% fipsList) %>% 
+     filter(Ownership == "Total Covered") %>% 
+     dplyr::select(c(22, 15, 16, 17)) 
+
+emp2007 <- q1_2007 %>% 
+  inner_join(.,q2_2007, by = "GEOID") %>% 
+  inner_join(.,q3_2007, by = "GEOID") %>% 
+  inner_join(.,q4_2007, by = "GEOID") 
+
+colnames(emp2007) <- paste(colnames(emp2007), "2007", sep="_")
+emp2007 <- emp2007 %>% 
+  rename("GEOID" = "GEOID_2007")
+
+
+
+#2008-------- q1 is fabricated using q4 2007 M12
+q1_2008m1 <-  read_excel("employmentData/allhlcn074.xlsx") %>%
+     mutate(GEOID = paste0(St, Cnty, "")) %>% 
+     filter(GEOID %in% fipsList) %>% 
+     filter(Ownership == "Total Covered") %>% 
+     dplyr::select(c(22, 17))
+q1_2008 <- q1_2008m1 %>% 
+  left_join(.,q1_2008m1, by = "GEOID") %>% 
+  left_join(.,q1_2008m1, by = "GEOID") %>% 
+  rename("January Employment" = "December Employment.x",
+         "February Employment" = "December Employment.y",
+         "March Employment" = "December Employment") 
+
+q2_2008 <- read_excel("employmentData/allhlcn082.xlsx") %>%   
+     mutate(GEOID = paste0(St, Cnty, "")) %>% 
+     filter(GEOID %in% fipsList) %>% 
+     filter(Ownership == "Total Covered") %>% 
+     dplyr::select(c(22, 15, 16, 17)) 
+q3_2008 <- read_excel("employmentData/allhlcn083.xlsx")  %>%   
+     mutate(GEOID = paste0(St, Cnty, "")) %>% 
+     filter(GEOID %in% fipsList) %>% 
+     filter(Ownership == "Total Covered") %>% 
+     dplyr::select(c(22, 15, 16, 17)) 
+q4_2008m1 <-read_excel("employmentData/allhlcn083.xlsx")  %>%
+     mutate(GEOID = paste0(St, Cnty, "")) %>% 
+     filter(GEOID %in% fipsList) %>% 
+     filter(Ownership == "Total Covered") %>% 
+     dplyr::select(c(22, 17)) 
+
+#Q4 is fabricated using the last known observation of employment Q3 2008, M9)
+
+q4_2008 <- q4_2008m1 %>% 
+  left_join(.,q4_2008m1, by = "GEOID") %>% 
+  left_join(.,q4_2008m1, by = "GEOID") %>% 
+  rename("October Employment" = "September Employment",
+         "November Employment" = "September Employment.x",
+         "December Employment" = "September Employment.y") %>% 
+    dplyr::select(c(1,4,3,2))
+
+emp2008 <- q1_2008 %>% 
+  inner_join(.,q2_2008, by = "GEOID") %>% 
+  inner_join(.,q3_2008, by = "GEOID") %>% 
+  inner_join(.,q4_2008, by = "GEOID") 
+
+colnames(emp2008) <- paste(colnames(emp2008), "2008", sep="_")
+emp2008 <- emp2008 %>% 
+  rename("GEOID" = "GEOID_2008")
+
+
+#2009
+#Q1 2009 is fabricated using Q4 2009 M12 data
+q1_2009m1 <-read_excel("employmentData/allhlcn083.xlsx")  %>%
+     mutate(GEOID = paste0(St, Cnty, "")) %>% 
+     filter(GEOID %in% fipsList) %>% 
+     filter(Ownership == "Total Covered") %>% 
+     dplyr::select(c(22, 17)) 
+
+q1_2009 <- q1_2009m1 %>% 
+  left_join(.,q1_2009m1, by = "GEOID") %>% 
+  left_join(.,q1_2009m1, by = "GEOID") %>% 
+  rename("January Employment" = "September Employment",
+         "February Employment" = "September Employment.x",
+         "March Employment" = "September Employment.y") %>% 
+    dplyr::select(c(1,4,3,2))
+q2_2009 <- read_excel("employmentData/allhlcn092.xlsx") %>%   
+     mutate(GEOID = paste0(St, Cnty, "")) %>% 
+     filter(GEOID %in% fipsList) %>% 
+     filter(Ownership == "Total Covered") %>% 
+     dplyr::select(c(22, 15, 16, 17)) 
+q3_2009 <- read_excel("employmentData/allhlcn093.xlsx")  %>%   
+     mutate(GEOID = paste0(St, Cnty, "")) %>% 
+     filter(GEOID %in% fipsList) %>% 
+     filter(Ownership == "Total Covered") %>% 
+     dplyr::select(c(22, 15, 16, 17)) 
+q4_2009 <- read_excel("employmentData/allhlcn094.xlsx") %>%   
+     mutate(GEOID = paste0(St, Cnty, "")) %>% 
+     filter(GEOID %in% fipsList) %>% 
+     filter(Ownership == "Total Covered") %>% 
+     dplyr::select(c(22, 15, 16, 17)) 
+
+emp2009 <- q1_2009 %>% 
+  inner_join(.,q2_2009, by = "GEOID") %>% 
+  inner_join(.,q3_2009, by = "GEOID") %>% 
+  inner_join(.,q4_2009, by = "GEOID") 
+
+colnames(emp2009) <- paste(colnames(emp2009), "2009", sep="_")
+emp2009 <- emp2009 %>% 
+  rename("GEOID" = "GEOID_2009")
+
+
+#2010
+q1_2010 <- read_excel("employmentData/allhlcn101.xlsx") %>% 
+     mutate(GEOID = paste0(St, Cnty, "")) %>% 
+     filter(GEOID %in% fipsList) %>% 
+     filter(Ownership == "Total Covered") %>% 
+     dplyr::select(c(22, 15, 16, 17)) 
+q2_2010 <- read_excel("employmentData/allhlcn102.xlsx") %>%   
+     mutate(GEOID = paste0(St, Cnty, "")) %>% 
+     filter(GEOID %in% fipsList) %>% 
+     filter(Ownership == "Total Covered") %>% 
+     dplyr::select(c(22, 15, 16, 17)) 
+q3_2010 <- read_excel("employmentData/allhlcn103.xlsx")  %>%   
+     mutate(GEOID = paste0(St, Cnty, "")) %>% 
+     filter(GEOID %in% fipsList) %>% 
+     filter(Ownership == "Total Covered") %>% 
+     dplyr::select(c(22, 15, 16, 17)) 
+q4_2010 <- read_excel("employmentData/allhlcn104.xlsx") %>%   
+     mutate(GEOID = paste0(St, Cnty, "")) %>% 
+     filter(GEOID %in% fipsList) %>% 
+     filter(Ownership == "Total Covered") %>% 
+     dplyr::select(c(22, 15, 16, 17)) 
+
+emp2010 <- q1_2010 %>% 
+  inner_join(.,q2_2010, by = "GEOID") %>% 
+  inner_join(.,q3_2010, by = "GEOID") %>% 
+  inner_join(.,q4_2010, by = "GEOID")
+
+colnames(emp2010) <- paste(colnames(emp2010), "2010", sep="_")
+emp2010 <- emp2010 %>% 
+  rename("GEOID" = "GEOID_2010")
+
+#2011
+q1_2011 <- read_excel("employmentData/allhlcn111.xlsx") %>% 
+     mutate(GEOID = paste0(St, Cnty, "")) %>% 
+     filter(GEOID %in% fipsList) %>% 
+     filter(Ownership == "Total Covered") %>% 
+     dplyr::select(c(22, 15, 16, 17)) 
+q2_2011 <- read_excel("employmentData/allhlcn112.xlsx") %>%   
+     mutate(GEOID = paste0(St, Cnty, "")) %>% 
+     filter(GEOID %in% fipsList) %>% 
+     filter(Ownership == "Total Covered") %>% 
+     dplyr::select(c(22, 15, 16, 17)) 
+q3_2011 <- read_excel("employmentData/allhlcn113.xlsx")  %>%   
+     mutate(GEOID = paste0(St, Cnty, "")) %>% 
+     filter(GEOID %in% fipsList) %>% 
+     filter(Ownership == "Total Covered") %>% 
+     dplyr::select(c(22, 15, 16, 17)) 
+q4_2011 <- read_excel("employmentData/allhlcn114.xlsx") %>%   
+     mutate(GEOID = paste0(St, Cnty, "")) %>% 
+     filter(GEOID %in% fipsList) %>% 
+     filter(Ownership == "Total Covered") %>% 
+     dplyr::select(c(22, 15, 16, 17)) 
+
+emp2011 <- q1_2011 %>% 
+  inner_join(.,q2_2011, by = "GEOID") %>% 
+  inner_join(.,q3_2011, by = "GEOID") %>% 
+  inner_join(.,q4_2011, by = "GEOID")
+
+colnames(emp2011) <- paste(colnames(emp2011), "2011", sep="_")
+emp2011 <- emp2011 %>% 
+  rename("GEOID" = "GEOID_2011")
+
+#2012
+q1_2012 <- read_excel("employmentData/allhlcn121.xlsx") %>% 
+     mutate(GEOID = paste0(St, Cnty, "")) %>% 
+     filter(GEOID %in% fipsList) %>% 
+     filter(Ownership == "Total Covered") %>% 
+     dplyr::select(c(22, 15, 16, 17)) 
+q2_2012 <- read_excel("employmentData/allhlcn122.xlsx") %>%   
+     mutate(GEOID = paste0(St, Cnty, "")) %>% 
+     filter(GEOID %in% fipsList) %>% 
+     filter(Ownership == "Total Covered") %>% 
+     dplyr::select(c(22, 15, 16, 17)) 
+q3_2012 <- read_excel("employmentData/allhlcn123.xlsx")  %>%   
+     mutate(GEOID = paste0(St, Cnty, "")) %>% 
+     filter(GEOID %in% fipsList) %>% 
+     filter(Ownership == "Total Covered") %>% 
+     dplyr::select(c(22, 15, 16, 17)) 
+q4_2012 <- read_excel("employmentData/allhlcn124.xlsx") %>%   
+     mutate(GEOID = paste0(St, Cnty, "")) %>% 
+     filter(GEOID %in% fipsList) %>% 
+     filter(Ownership == "Total Covered") %>% 
+     dplyr::select(c(22, 15, 16, 17)) 
+
+emp2012 <- q1_2012 %>% 
+  inner_join(.,q2_2012, by = "GEOID") %>% 
+  inner_join(.,q3_2012, by = "GEOID") %>% 
+  inner_join(.,q4_2012, by = "GEOID")
+
+colnames(emp2012) <- paste(colnames(emp2012), "2012", sep="_")
+emp2012 <- emp2012 %>% 
+  rename("GEOID" = "GEOID_2012")
+
+#2013
+q1_2013 <- read_excel("employmentData/allhlcn131.xlsx") %>% 
+     mutate(GEOID = paste0(St, Cnty, "")) %>% 
+     filter(GEOID %in% fipsList) %>% 
+     filter(Ownership == "Total Covered") %>% 
+     dplyr::select(c(22, 15, 16, 17)) 
+q2_2013 <- read_excel("employmentData/allhlcn132.xlsx") %>%   
+     mutate(GEOID = paste0(St, Cnty, "")) %>% 
+     filter(GEOID %in% fipsList) %>% 
+     filter(Ownership == "Total Covered") %>% 
+     dplyr::select(c(22, 15, 16, 17)) 
+q3_2013 <- read_excel("employmentData/allhlcn133.xlsx")  %>%   
+     mutate(GEOID = paste0(St, Cnty, "")) %>% 
+     filter(GEOID %in% fipsList) %>% 
+     filter(Ownership == "Total Covered") %>% 
+     dplyr::select(c(22, 15, 16, 17)) 
+q4_2013 <- read_excel("employmentData/allhlcn134.xlsx") %>%   
+     mutate(GEOID = paste0(St, Cnty, "")) %>% 
+     filter(GEOID %in% fipsList) %>% 
+     filter(Ownership == "Total Covered") %>% 
+     dplyr::select(c(22, 15, 16, 17)) 
+
+emp2013 <- q1_2013 %>% 
+  inner_join(.,q2_2013, by = "GEOID") %>% 
+  inner_join(.,q3_2013, by = "GEOID") %>% 
+  inner_join(.,q4_2013, by = "GEOID")
+
+colnames(emp2013) <- paste(colnames(emp2013), "2013", sep="_")
+emp2013 <- emp2013 %>% 
+  rename("GEOID" = "GEOID_2013")
+
+#2014
+q1_2014 <- read_excel("employmentData/allhlcn141.xlsx") %>% 
+     mutate(GEOID = paste0(St, Cnty, "")) %>% 
+     filter(GEOID %in% fipsList) %>% 
+     filter(Ownership == "Total Covered") %>% 
+     dplyr::select(c(22, 15, 16, 17)) 
+q2_2014 <- read_excel("employmentData/allhlcn142.xlsx") %>%   
+     mutate(GEOID = paste0(St, Cnty, "")) %>% 
+     filter(GEOID %in% fipsList) %>% 
+     filter(Ownership == "Total Covered") %>% 
+     dplyr::select(c(22, 15, 16, 17)) 
+q3_2014 <- read_excel("employmentData/allhlcn143.xlsx")  %>%   
+     mutate(GEOID = paste0(St, Cnty, "")) %>% 
+     filter(GEOID %in% fipsList) %>% 
+     filter(Ownership == "Total Covered") %>% 
+     dplyr::select(c(22, 15, 16, 17)) 
+q4_2014 <- read_excel("employmentData/allhlcn144.xlsx") %>%   
+     mutate(GEOID = paste0(St, Cnty, "")) %>% 
+     filter(GEOID %in% fipsList) %>% 
+     filter(Ownership == "Total Covered") %>% 
+     dplyr::select(c(22, 15, 16, 17)) 
+
+emp2014 <- q1_2014 %>% 
+  inner_join(.,q2_2014, by = "GEOID") %>% 
+  inner_join(.,q3_2014, by = "GEOID") %>% 
+  inner_join(.,q4_2014, by = "GEOID")
+
+colnames(emp2014) <- paste(colnames(emp2014), "2014", sep="_")
+emp2014 <- emp2014 %>% 
+  rename("GEOID" = "GEOID_2014")
+
+
+
+emp2003 %>% 
+  inner_join(., emp2004, by = "GEOID") %>% 
+  inner_join(., emp2005, by = "GEOID") %>% 
+  inner_join(., emp2006, by = "GEOID") %>% 
+  inner_join(., emp2007, by = "GEOID") %>% 
+  inner_join(., emp2008, by = "GEOID") %>% 
+  inner_join(., emp2009, by = "GEOID") %>% 
+  inner_join(., emp2010, by = "GEOID") %>% 
+  inner_join(., emp2011, by = "GEOID") %>% 
+  inner_join(., emp2012, by = "GEOID") %>% 
+  inner_join(., emp2013, by = "GEOID") %>% 
+  inner_join(., emp2014, by = "GEOID") -> empMonthly
+
+empMonthly <- as.data.frame(empMonthly)
+
+rownames(empMonthly) <- empMonthly$GEOID
+
+empMonthly <- empMonthly %>% dplyr::select(-GEOID) %>% t()
+
+saveRDS(empMonthly, "empMonthly.rds")
+```
+
+```{r resilienceFunction}
+empMonthly <- readRDS("empMonthly.RDS")
+
+DRfunction <- function(input) {
+
+DR <- matrix(nrow = 420, ncol = 2)
+colnames(DR) <- c("drop", "rebound")
+s <- 0.0001
+
+for (i in 1:420){
+
+for (j in 38:77){
+if (j == which.max(input[38:77,i])+37){
+t0 <- j - 36
+t1 <- j
+}}  
+  
+for (j in t1:138){
+if (j == which.min(input[t1:138,i])+(t1-1)){
+t2 <- j 
+t3 <- j + 6
+}}  
+  
+y0 <- input[t0, i]
+y1 <- input[t1, i]
+y2 <- input[t2, i]
+y3 <- input[t3, i]
+
+r <- (y1/y0)^(1/36) - 1
+y2hat <- y1*((1+r)^(t2-t1))
+
+
+#calculate drop and put in 1st column
+DR[i, 1] <- (y2hat - y2)/(y2hat)
+
+#calculate rebound and put in 2nd column 
+DR[i, 2] <- ((y3-y2)/y2)*((1)/(t3-t2))
+
+#Convert matrix into data frame for manipulation with DPLYR
+DR <- as.data.frame(DR)
+}
+
+
+DR <- DR %>% 
+  mutate(
+    dropNorm = drop - min(drop) + s,
+    reboundNorm = rebound - min(rebound) + s,
+    ratio = log(reboundNorm / dropNorm),
+    ratioNorm = ratio + 2.611577,
+    ratioSD = .609948,
+    resilience = ratioNorm/ratioSD)
+
+DR <- cbind(fipsList, DR)
+
+DR %>% 
+  rename(., "GEOID" = "fipsList") %>% 
+  filter(GEOID != "42113") %>% 
+  dplyr::select(GEOID, rebound, drop, resilience) 
+}
+
+HGresilience <- DRfunction(empMonthly)
+
+#counties with expected drop and rebound characteristics 
+HGresilienceGood <- HGresilience %>% 
+  filter(drop >= 0,
+         rebound >= 0)
+
+SDD2012Wide_withResilience <- left_join(SDD2012Wide, HGresilienceGood, by = "GEOID")
+```
+
+```{r 2012regressionanalysis}
+RegDropComponents2012 <- lm(drop ~ Gini +
+                                oldAge +
+                                YouthDepend + 
+                                BAdegreePlus + 
+                                lang2nd + 
+                                belowPoverty + 
+                                twoIncomes +
+                                singleParent +
+                                healthcare + 
+                                percentMale + 
+                                ability + 
+                                HSorLess + 
+                                OwnerPct + 
+                                Pct21st + 
+                                blueCollar +
+                                factor(state), 
+                            data = SDD2012Wide_withResilience)
+
+
+
+app_subregions <- read_excel("app_subregions.xlsx", col_names = T) %>% 
+  mutate(subregion = case_when(
+    Region == "Southern" ~ 1,
+    Region == "South Central" ~ 2,
+    Region == "Central" ~ 3,
+    Region == "North Central" ~ 4,
+    Region == "Northern" ~ 5,
+    TRUE ~ 0)) %>% 
+  dplyr::select(-Region)
+
+SDD2012Wide_withResilience %>% 
+  left_join(.,app_subregions, by = "GEOID") -> SDD2012Wide_withResilience_subregions
+
+RegDropComponents2012regions <- lm(drop ~ Gini +
+                                oldAge +
+                                YouthDepend + 
+                                BAdegreePlus + 
+                                lang2nd + 
+                                belowPoverty + 
+                                twoIncomes +
+                                singleParent +
+                                healthcare + 
+                                percentMale + 
+                                ability + 
+                                HSorLess + 
+                                OwnerPct + 
+                                Pct21st + 
+                                blueCollar +
+                                factor(subregion), 
+                            data = SDD2012Wide_withResilience_subregions)
+
+            
+stargazer(RegDropComponents2012, RegDropComponents2012regions,
+            type="html",
+            out="indexRegions.doc",
+            intercept.bottom = T,
+            intercept.top = F,
+            ci = F, 
+            digits=2,
+            model.names = T,
+            single.row = T)
+
+```
+
+```{r restructure2012Data}
+#Invert variables to expected positive 
+
+SDD2012Wide_withResilience %>% 
+  mutate(
+    antiBAdegreePlus = (100-BAdegreePlus),
+    antibelowPoverty = (100-belowPoverty),
+    percentFemale = (100-percentMale),
+    antiHSorLess = (100-HSorLess),
+    antiOwnerPct = (100-OwnerPct),
+    antiPct21st = (100-Pct21st),
+    antiblueCollar = (100-blueCollar)) %>% 
+  dplyr::select(-c(BAdegreePlus, belowPoverty, percentMale, HSorLess, OwnerPct, Pct21st, blueCollar)) -> SDD2012Wide_withResilience_Inverted
+
+#run regression to verify 
+RegDropComponents2012Inverted <- lm(drop ~ Gini + 
+                                oldAge +  
+                                YouthDepend + 
+                                antiBAdegreePlus + 
+                                lang2nd +  
+                                antibelowPoverty + 
+                                twoIncomes + 
+                                singleParent + 
+                                healthcare + 
+                                percentFemale + 
+                                ability + 
+                                antiHSorLess + 
+                                antiOwnerPct + 
+                                antiPct21st + 
+                                antiblueCollar + 
+                                factor(state), 
+                            data = SDD2012Wide_withResilience_Inverted)
+```
+
+```{r build2012Index}
+SDD2012Wide_withResilience_Inverted %>% 
+  mutate(
+  oldAge = (oldAge-min(oldAge))/(max(oldAge)-min(oldAge)),
+  ability = (ability-min(ability))/(max(ability)-min(ability)),
+  healthcare = (healthcare-min(healthcare))/(max(healthcare)-min(healthcare)),
+  percentFemale = (percentFemale-min(percentFemale))/(max(percentFemale)-min(percentFemale)),
+  antiBAdegreePlus = (antiBAdegreePlus-min(antiBAdegreePlus))/(max(antiBAdegreePlus)-min(antiBAdegreePlus)),
+  YouthDepend = (YouthDepend-min(YouthDepend))/(max(YouthDepend)-min(YouthDepend)),
+  Gini = (Gini-min(Gini))/(max(Gini)-min(Gini)),
+  antibelowPoverty = (antibelowPoverty-min(antibelowPoverty))/(max(antibelowPoverty)-min(antibelowPoverty)),
+  twoIncomes = (twoIncomes-min(twoIncomes))/(max(twoIncomes)-min(twoIncomes)),
+  singleParent = (singleParent-min(singleParent))/(max(singleParent)-min(singleParent)),
+  antiHSorLess = (antiHSorLess-min(antiHSorLess))/(max(antiHSorLess)-min(antiHSorLess)),
+  antiOwnerPct = (antiOwnerPct-min(antiOwnerPct))/(max(antiOwnerPct)-min(antiOwnerPct)), 
+  antiPct21st = (antiPct21st-min(antiPct21st))/(max(antiPct21st)-min(antiPct21st)), 
+  lang2nd = (lang2nd-min(lang2nd))/(max(lang2nd)-min(lang2nd)),
+  antiblueCollar = (antiblueCollar-min(antiblueCollar))/(max(antiblueCollar)-min(antiblueCollar))) %>% 
+  mutate(index = (Gini + 
+                oldAge +
+                ability + 
+                healthcare + 
+                percentFemale + 
+                antiBAdegreePlus + 
+                YouthDepend +
+                Gini + 
+                antibelowPoverty +
+                twoIncomes + 
+                singleParent + 
+                antiHSorLess + 
+                antiOwnerPct + 
+                lang2nd + 
+                antiblueCollar)/15) -> SDD2012_Standardized
+```
+
+```{r regress2012Index}
+RegDropIndex2012 <- lm(drop ~ index +
+                                factor(state), 
+                            data = SDD2012_Standardized)
+
+SDD2012_Standardized %>% 
+  left_join(.,app_subregions, by = "GEOID") -> SDD2012_Standardized_subregions
+
+RegDropIndex2012_subregions <- lm(drop ~ index + 
+                         factor(subregion),
+                       data = SDD2012_Standardized_subregions)
+
+summary(RegDropIndex2012_subregions)
+
+stargazer(RegDropIndex2012, RegDropIndex2012_subregions,
+            type="html",
+            out="indexRegions.doc",
+            intercept.bottom = T,
+            intercept.top = F,
+            ci = F, 
+            digits=2,
+            model.names = T,
+            single.row = T)
+
+```
+
+```{r restructure2019Data}
+SDD2019Wide %>% 
+  dplyr::select(-state) %>% 
+    pivot_longer(.,
+              !c(1:2),
+               names_to = "Variable",
+               values_to = "Value") -> SDD2019_Long_notInverted
+
+SDD2019_Long_notInverted %>% 
+  group_by(Variable) %>% 
+  dplyr::summarise(mean = mean(Value),
+            sd = sd(Value)) %>% 
+  mutate(mean = round(mean,digits = 2),
+         sd = round(sd, digits = 2)) -> SDD2019_summary
+
+SDD2019Wide %>% 
+  mutate(
+    antiBAdegreePlus = (100-BAdegreePlus),
+    antibelowPoverty = (100-belowPoverty),
+    percentFemale = (100-percentMale),
+    antiHSorLess = (100-HSorLess),
+    antiOwnerPct = (100-OwnerPct),
+    antiPct21st = (100-Pct21st),
+    antiblueCollar = (100-blueCollar)) %>% 
+  dplyr::select(-c(BAdegreePlus, belowPoverty, percentMale, HSorLess, OwnerPct, Pct21st, blueCollar)) -> SDD2019Wide_Inverted
+
+```
+
+```{r build2019Index}
+SDD2019Wide_Inverted %>% 
+  mutate(
+  oldAge = (oldAge-min(oldAge))/(max(oldAge)-min(oldAge)),
+  ability = (ability-min(ability))/(max(ability)-min(ability)),
+  healthcare = (healthcare-min(healthcare))/(max(healthcare)-min(healthcare)),
+  percentFemale = (percentFemale-min(percentFemale))/(max(percentFemale)-min(percentFemale)),
+  antiBAdegreePlus = (antiBAdegreePlus-min(antiBAdegreePlus))/(max(antiBAdegreePlus)-min(antiBAdegreePlus)),
+  YouthDepend = (YouthDepend-min(YouthDepend))/(max(YouthDepend)-min(YouthDepend)),
+  Gini = (Gini-min(Gini))/(max(Gini)-min(Gini)),
+  antibelowPoverty = (antibelowPoverty-min(antibelowPoverty))/(max(antibelowPoverty)-min(antibelowPoverty)),
+  twoIncomes = (twoIncomes-min(twoIncomes))/(max(twoIncomes)-min(twoIncomes)),
+  singleParent = (singleParent-min(singleParent))/(max(singleParent)-min(singleParent)),
+  antiHSorLess = (antiHSorLess-min(antiHSorLess))/(max(antiHSorLess)-min(antiHSorLess)),
+  antiOwnerPct = (antiOwnerPct-min(antiOwnerPct))/(max(antiOwnerPct)-min(antiOwnerPct)), 
+  antiPct21st = (antiPct21st-min(antiPct21st))/(max(antiPct21st)-min(antiPct21st)), 
+  lang2nd = (lang2nd-min(lang2nd))/(max(lang2nd)-min(lang2nd)),
+  antiblueCollar = (antiblueCollar-min(antiblueCollar))/(max(antiblueCollar)-min(antiblueCollar))) %>% 
+  mutate(index = (oldAge +
+                ability + 
+                healthcare + 
+                percentFemale + 
+                antiBAdegreePlus + 
+                YouthDepend +
+                Gini + 
+                antibelowPoverty +
+                twoIncomes + 
+                singleParent + 
+                antiHSorLess + 
+                antiOwnerPct + 
+                antiPct21st +
+                lang2nd + 
+                antiblueCollar)/15) -> SDD2019_Standardized
+
+
+
+SDD2019Wide_Inverted_Clean <- SDD2019Wide_Inverted %>% 
+    dplyr::select(-c(1:2)) %>% 
+    dplyr::select(-state) 
+
+
+SDD2019Wide_Inverted %>% 
+  dplyr::select(-c(,11)) %>% 
+  pivot_longer(.,
+              !c(1:2),
+               names_to = "Variable",
+               values_to = "Value") -> SDD2019_Long
+
+SDD2019_Standardized %>%
+  dplyr::select(-c(,11)) %>% 
+  pivot_longer(.,
+              !c(1:2),
+               names_to = "Variable",
+               values_to = "Value") -> SDD2019_Long_Standardized
+```
+
+```{r visualizeSDVs}
+cbPalette <- c( "#009E73", "#F0E442", "#0072B2", "#D55E00", "#CC79A7")
+
+SDD2019_Long_notInverted %>%
+  group_by(Variable) %>% 
+  mutate(standardized = (Value - min(Value))/(max(Value)-min(Value))) %>% 
+    filter(Variable == "Gini" | Variable == "oldAge" | Variable == "YouthDepend" | Variable == "lang2nd" | Variable == "singleParent") %>% 
+  ggplot(aes(x = standardized, colour = Variable)) +
+  geom_density() +
+  xlab("") +
+  ylab("Density") +
+  labs(title = "Distribution of 2019 Variables Used for Index Construction") +
+  scale_fill_manual(
+    name = "Variables",
+    labels = c("Gini Coefficient", "Old Age Dependency", "Youth Dependency", "English as 2nd Language", "Single Parent Households"),
+    values=cbPalette) -> first5density
+    
+
+SDD2019_Long_notInverted %>%
+  group_by(Variable) %>% 
+  mutate(standardized = (Value - min(Value))/(max(Value)-min(Value))) %>% 
+  filter(Variable == "twoIncomes" | Variable == "healthcare" | Variable == "ability" | Variable == "BAdegreePlus" | Variable == "belowPoverty") %>% 
+  ggplot(aes(x = standardized, colour = Variable)) +
+  geom_density() +
+  xlab("") +
+  ylab("Density") +
+  scale_fill_manual(
+    name = "Variables",
+    labels = c("Two Income Households", "Health Insurance Coverage", "Disability", "BA Degree or More", "Below Poverty"),
+    values=cbPalette) -> second5density
+    
+
+SDD2019_Long_notInverted %>%
+  group_by(Variable) %>% 
+  mutate(standardized = (Value - min(Value))/(max(Value)-min(Value))) %>% 
+  filter(Variable == "percentMale" | Variable == "HSorLess" | Variable == "OwnerPct" | Variable == "Pct21st" | Variable == "blueCollar") %>% 
+  ggplot(aes(x = standardized, colour = Variable)) +
+  geom_density() +
+  xlab("Standardized Value") +
+  ylab("Density") +
+  scale_fill_manual(
+    name = "Variables",
+    labels = c("Percent Male", "HS or Less", "Home Ownership", "New Housing", "Blue Collar Employment"),
+    values=cbPalette) -> third5density
+    
+
+densities <- ggarrange(first5density,
+                      second5density,
+                      third5density,
+                     ncol = 1)
+densities
+
+
+SDD2019_Standardized %>% 
+  dplyr::select(index) %>% 
+  ggplot(., aes(x = index)) + 
+  geom_histogram(aes(y = ..density..),
+                 colour = 1, fill = "white") +
+  geom_density() + 
+  theme_minimal() +
+  xlab("County Resilience Index") +
+  ylab("Density") 
+```
+
+```{r importPollutantData}
+cbp2019data <- read_csv("cbp2019data.csv", col_names = T)[-1,c(-3,-5)] %>% 
+#Rename GEO_ID to match our existing naming conventinos
+  rename(.,GEOID = GEO_ID) %>% 
+#Reduce 15 digit international GEOID to our 5 digit FIPS code
+  mutate(GEOID = str_sub(GEOID, 10,15)) %>%
+#Filter to Appalachian counties, remove summary totals by county, remove subtotals for company sizes
+  filter(GEOID %in% fipsList, 
+         EMPSZES == '001', 
+         NAICS2017 != '00') %>% 
+#Remove unnecessary columns  
+  dplyr::select(GEOID, NAME, NAICS2017, EMPSZES, ESTAB, ESTAB, PAYANN, EMP) 
+```
+
+```{r wranglePollutantData}
+cbp2019data %>% 
+  group_by(GEOID) %>%
+#Change payroll and employment columns from characters to numbers 
+  mutate_at(vars(PAYANN, EMP), as.numeric) %>% 
+#Create percentages columns for payroll and employment by NAICS code... grouped by county 
+  mutate(PAYANN_PCT = PAYANN / sum(PAYANN), 
+         EMP_PCT = EMP/ sum(EMP)) %>%
+  
+#Messy summation of percentages. This command effectively reads as "if a variable is in one of these three NAICS codes, add it's value to the new column. If not, add a 0 to the new column."
+  mutate(tempVar = case_when(NAICS2017 == '21' ~ PAYANN_PCT,
+    NAICS2017 == '22' ~ PAYANN_PCT,
+    NAICS2017 == '31-33' ~ PAYANN_PCT,
+    TRUE ~ 0)) %>% 
+#These lines effectively read "take the sum of the new column for each county, and add that value to the new column for every variable in the county"
+  mutate(payroll = sum(tempVar)) %>% 
+#Remove the temporary column
+  dplyr::select(-tempVar) %>% 
+# This command effectively reads as "if a variable is in one of these three NAICS codes, add it's value to the new column. If not, add a 0 to the new column."
+  mutate(tempVar = case_when(NAICS2017 == '21' ~ EMP_PCT,
+    NAICS2017 == '22' ~ EMP_PCT,
+    NAICS2017 == '31-33' ~ EMP_PCT,
+    TRUE ~ 0)) %>% 
+ #These lines effectively read "take the sum of the new column for each county, and add that value to the new column for every variable in the county"
+  mutate(employment = sum(tempVar)) %>% 
+#Remove the temporary column
+  dplyr::select(-tempVar) %>%
+  
+#Remove all unnecessary columns 
+  dplyr::select(GEOID, employment) %>% 
+  unique() %>% 
+#Round numbers to two digits and save as object
+  mutate_if(., is.numeric, round, digits = 2) -> cbp2019exposure
+
+```
+
+```{r RewnewableEnergy}
+sixdigitCBP <- read_csv("backburner/sixdigitCBP.csv")
+
+renewableCBP <- sixdigitCBP %>% 
+  filter(NAICS2017 == '221111' | NAICS2017 ==  '221114' | NAICS2017 == '221115' | NAICS2017 == '221116' | NAICS2017 == '221117') 
+```
+
+```{r visualizeVulnerability}
+cbp2019exposure %>% 
+  ggplot(., aes(x = employment)) + 
+  geom_histogram(aes(y = ..density..),
+                 colour = 1, fill = "white") +
+  geom_density() + 
+  theme_minimal() +
+  xlab("Employment in Pollutant Industry") +
+  ylab("Density") 
+```
+
+```{r BiplotIndices}
+SDD2019_Standardized %>% 
+  dplyr::select(GEOID, index) %>% 
+  left_join(.,cbp2019exposure, by = "GEOID") -> countyIndices2019
+
+countyIndicesPlot <- countyIndices2019 %>% 
+  ggplot(aes(x = index, y = employment)) +
+  geom_point(size = 3) + 
+  geom_hline(aes(colour = "red", yintercept = quantile(employment, .45))) +
+  geom_hline(aes(colour = "red", yintercept = quantile(employment, .55))) +
+  geom_vline(aes(colour = "red", xintercept = quantile(index, .45))) + 
+  geom_vline(aes(colour = "red", xintercept = quantile(index, .55))) +
+  theme_minimal() +
+  theme(legend.position = "none",
+        axis.title=element_text(size=12)) +
+  labs(y = "Vulnerability", x = "Resilience")
+
+countyIndicesPlot
+```
+
+```{r importSkillData}
+
+#If backend.r will run, it belongs in this chunk and the chunk below.
+
+app_weighted_skills_by_PUMA <- read_csv("App_weighted_skills_by_PUMA.csv")
+
+puma_county_crosswalk <- read.csv("2010_Census_Tract_to_2010_PUMA.txt") 
+```
+
+```{r wrangleSkillData}
+puma_county_crosswalk_reduced <- puma_county_crosswalk %>% 
+  dplyr::select(STATEFP, COUNTYFP, PUMA5CE) %>% unique() %>%
+  
+  #make state fips proper digits
+  mutate(STATEFP = case_when(
+    STATEFP == 1 ~ paste0("0", STATEFP, sep = ""),
+    TRUE ~ as.character(STATEFP))) %>% 
+  
+  #make county fips proper digits
+  mutate(COUNTYFP = case_when(
+  nchar(as.character(COUNTYFP)) == 1 ~ paste0("00", COUNTYFP, sep = ""),
+  nchar(as.character(COUNTYFP)) == 2 ~ paste0("0", COUNTYFP, sep = ""),
+  TRUE ~ as.character(COUNTYFP))) %>% 
+  
+  #make puams proper digits
+  mutate(PUMA5CE = case_when(
+    nchar(as.character(PUMA5CE)) == 3 ~ paste0("00",PUMA5CE, sep = ""),
+    nchar(as.character(PUMA5CE)) == 4 ~ paste0("0", PUMA5CE, sep = ""),
+    TRUE ~ as.character(PUMA5CE))) %>% 
+  
+  #create 5 digit county fips 
+  mutate(GEOID = paste0(STATEFP, COUNTYFP, sep = "")) %>% 
+  mutate(PUMA = paste0(STATEFP, PUMA5CE, sep = "")) %>%
+  filter(GEOID %in% fipsList) %>% 
+  dplyr::select(-c(PUMA5CE, STATEFP, COUNTYFP)) 
+
+# This section below finds that Allegheny County contains multiple PUMAs. It checks for homogeneity and then averages the skills from all PUMAS to assign a value to the county.
+
+
+# Create skill list by county 
+skills_by_county0 <- inner_join(puma_county_crosswalk_reduced, app_weighted_skills_by_PUMA) %>% 
+  rename(value = "Normalized Index") %>% 
+  unique() 
+```
+
+```{r verifyPumaCountyHomogeneity}
+#Find how many PUMAs are in Allegheny 
+skills_by_county0 %>% 
+  filter(GEOID == 42003) %>%
+  dplyr::select(PUMA) %>% unique() %>% nrow() -> AlleghenyPumasNum
+
+#test for homogeneity in allegheny
+skills_by_county0 %>%
+  filter(GEOID == 42003) %>%
+  group_by(skillname) %>% 
+  mutate(average = mean(value)) %>% 
+  mutate(diff = average - value,
+         pct = 100 * (diff / average)) -> alleghenySkills
+
+summary(alleghenySkills$diff)
+summary(alleghenySkills$value)
+summary(alleghenySkills$pct)
+
+#average skills 
+
+skills_by_county0 %>% 
+  filter(GEOID == 42003) %>%
+  group_by(skillname) %>% 
+  mutate(average = mean(value)) %>% 
+  dplyr::select(-value) %>% 
+  dplyr::rename("value" = "average") %>% 
+  unique() -> skills42003
+
+
+# test for homogeneity in boncumbe county 
+skills_by_county0 %>% 
+  filter(GEOID == 37021) %>%
+  dplyr::select(PUMA) %>% unique() %>% nrow() -> BuncombePumasNum
+
+#test for homogeneity in allegheny
+skills_by_county0 %>%
+  filter(GEOID == 37021) %>%
+  group_by(skillname) %>% 
+  mutate(average = mean(value)) %>% 
+  mutate(diff = average - value,
+         pct = 100 * (diff / average)) -> buncombeSkills
+
+summary(buncombeSkills$diff)
+summary(buncombeSkills$value)
+summary(buncombeSkills$pct)
+
+#average skills 
+
+skills_by_county0 %>% 
+  filter(GEOID == 37021) %>%
+  group_by(skillname) %>% 
+  mutate(average = mean(value)) %>% 
+  dplyr::select(-value) %>% 
+  dplyr::rename("value" = "average") %>% 
+  unique() -> skills37021
+
+
+#identify duplijcates in knox 
+skills_by_county0 %>% 
+  filter(GEOID == 47093) %>% 
+  dplyr::select(PUMA) %>% unique() %>% nrow() -> KnoxPumasNum
+
+#test for homogeneity in knox
+skills_by_county0 %>%
+  filter(GEOID == 47093) %>%
+  group_by(skillname) %>% 
+  mutate(average = mean(value)) %>% 
+  mutate(diff = average - value,
+         pct = 100 * (diff / average)) -> knoxSkills
+summary(knoxSkills$diff)
+summary(knoxSkills$value)
+summary(knoxSkills$pct)
+
+#average skills 
+
+skills_by_county0 %>% 
+  filter(GEOID == 47093) %>%
+  group_by(skillname) %>% 
+  mutate(average = mean(value)) %>% 
+  dplyr::select(-value) %>% 
+  dplyr::rename("value" = "average") %>% 
+  unique() -> skills47093
+
+#reinclude in the data set 
+skills_by_county0 %>% 
+  filter(GEOID != 42003) %>% 
+  rbind(.,skills42003) %>% 
+  rbind(.,skills37021) %>% 
+  rbind(.,skills47093) -> skills_by_county
+
+
+#Make a map of multi Puma counties
+skills_by_county0 %>% 
+  group_by(GEOID, skillname) %>% 
+  mutate(count = n()) %>%
+  ungroup() %>% 
+  dplyr::select(GEOID, count) %>% 
+  unique() %>% 
+  left_join(.,shapeFiles) %>% 
+  st_as_sf(.) %>% 
+  ggplot(.,aes(fill = count)) +
+  geom_sf() +
+  theme_minimal() -> multiPumaMap
+
+
+skills_by_county0 %>% 
+  group_by(GEOID, skillname) %>% 
+  mutate(count = n()) %>%
+  ungroup() %>% 
+  dplyr::select(GEOID, count) %>% 
+  unique() %>% 
+  filter(count > 1) -> multiPumaList
+
+#add shape files 
+skills_by_county_geo <- inner_join(skills_by_county, shapeFiles, by = "GEOID")
+
+skillList <- skills_by_county %>% 
+  dplyr::select(skillname) %>% 
+  unique() 
+
+summary(knoxSkills$pct)
+summary(buncombeSkills$pct)
+summary(alleghenySkills$pct)
+
+pumaDistributions <- rbind(
+summary(knoxSkills$pct),
+summary(buncombeSkills$pct),
+summary(alleghenySkills$pct))
+
+rownames(pumaDistributions) <- c("Knox", "Buncombe", "Allegheny")
+pumaDistributions
+
+knoxSkills %>% 
+  dplyr::select(skillname, average) %>% 
+  unique() %>% 
+  dplyr::rename("knox" = "average") -> knoxSkillsAvg
+buncombeSkills %>% 
+  dplyr::select(skillname, average) %>% 
+  unique() %>% 
+  dplyr::rename("buncombe" = "average") -> buncombeSkillsAvg
+alleghenySkills %>% 
+  dplyr::select(skillname, average) %>% 
+  unique() %>% 
+  dplyr::rename("allegheny" = "average") -> alleghenySkillsAvg
+
+clusterSkills <- left_join(
+  knoxSkillsAvg,
+  buncombeSkillsAvg,
+  by = "skillname") %>% 
+  left_join(.,
+  alleghenySkillsAvg,
+  by = "skillname")
+```
+
+```{r filterDataByIndices}
+countyIndices2019 %>% 
+  filter(employment >= quantile(countyIndices2019$employment, .55)) %>% 
+  filter(index <= quantile(countyIndices2019$index, .45)) %>% 
+  mutate(Risk = "1")  -> quad1
+
+
+countyIndices2019 %>% 
+  filter(employment >= quantile(countyIndices2019$employment, .45)) %>% 
+  filter(index >= quantile(countyIndices2019$index, .55)) %>% 
+  mutate(Risk = "2") -> quad2
+
+countyIndices2019 %>% 
+  filter(employment <= quantile(countyIndices2019$employment, .45)) %>% 
+  filter(index <= quantile(countyIndices2019$index, .55)) %>% 
+  mutate(Risk = "3") -> quad3
+
+countyIndices2019 %>% 
+  filter(employment <= quantile(countyIndices2019$employment, .45)) %>% 
+  filter(index >= quantile(countyIndices2019$index, .55)) %>% 
+  mutate(Risk = "4") -> quad4
+
+countyIndicesTarget <- rbind(quad1, quad2, quad3, quad4)
+
+countyIndices2019 %>% 
+  left_join(.,countyIndicesTarget) -> countyIndices_withBinaries
+
+
+countyIndices2019 %>% 
+  filter(employment <= quantile(countyIndices2019$employment, .55),
+         employment >= quantile(countyIndices2019$employment, .45),
+         index <= quantile(countyIndices2019$index, .55),
+         index >= quantile(countyIndices2019$index, .45) ) -> cuspCounties
+```
+
+```{r addGeo}
+countyIndices_withBinaries_Geo <- left_join(countyIndices_withBinaries, ShapeFiles, by = "GEOID")
+```
+
+```{r indicesStats}
+mean(countyIndices_withBinaries$index)
+sd(countyIndices_withBinaries$index)
+median(countyIndices_withBinaries$index)
+quantile(countyIndices_withBinaries$index, .25)
+quantile(countyIndices_withBinaries$index, .75)
+
+
+
+mean(countyIndices_withBinaries$employment)
+sd(countyIndices_withBinaries$employment)
+median(countyIndices_withBinaries$employment)
+quantile(countyIndices_withBinaries$employment, .25)
+quantile(countyIndices_withBinaries$employment, .75)
+min(countyIndices_withBinaries$employment)
+max(countyIndices_withBinaries$employment)
+
+#Virginia Data
+countyIndices_withBinaries%>%
+ filter(str_sub(GEOID,1,2) == 51) -> CIWBva
+mean(CIWBva$index)
+sd(CIWBva$index)
+mean(CIWBva$employment)
+sd(CIWBva$employment)
+
+```
+
+```{r maps}
+countyIndices_withBinaries %>%
+  left_join(.,ShapeFiles) %>%
+  st_as_sf(.) %>% 
+  ggplot(aes(fill = employment)) +
+  geom_sf() +
+  theme_minimal() +
+  scale_fill_gradient2(
+  low = muted("green"),
+  mid = "white",
+  high = muted("red"),
+  na.value = "grey",
+  space = "lab",
+  midpoint = mean(countyIndices_withBinaries$employment))+
+  guides(fill=guide_legend(title="Vulnerability")) -> vulnerabilityMap
+vulnerabilityMap
+
+countyIndices_withBinaries %>%
+  left_join(.,ShapeFiles) %>%
+  st_as_sf(.) %>% 
+  ggplot(aes(fill = index)) +
+  geom_sf() +
+  theme_minimal() +
+  scale_fill_gradient2(
+  low = muted("red"),
+  mid = "white",
+  high = muted("green"),
+  na.value = "grey",
+  space = "lab",
+  midpoint = median(countyIndices_withBinaries$index)) + 
+  guides(fill=guide_legend(title="Resilience Index"))-> resiliencyMap
+resiliencyMap
+
+
+countyIndices_withBinaries %>%
+  filter(str_sub(GEOID,1,2) == 51) %>% 
+  left_join(.,ShapeFiles) %>% 
+  st_as_sf(.) %>% 
+  ggplot(aes(fill = index)) +
+  geom_sf() +
+  theme_minimal() +
+  scale_fill_gradient2(
+  name = "Resilience Index",
+  low = muted("red"),
+  mid = "white",
+  high = muted("green"),
+  na.value = "grey",
+  space = "lab",
+  midpoint = mean(countyIndices_withBinaries$index)) +
+  geom_sf_label(aes(label = str_sub(NAME, 1, -18)), size = 5)  -> virginiaMapResilience
+
+
+countyIndices_withBinaries %>%
+  filter(str_sub(GEOID,1,2) == 51) %>% 
+  left_join(.,ShapeFiles) %>% 
+  st_as_sf(.) %>% 
+  ggplot(aes(fill = employment)) +
+  geom_sf() +
+  theme_minimal() +
+  scale_fill_gradient2(
+  name = "Vulnerability",
+  low = muted("green"),
+  mid = "white",
+  high = muted("red"),
+  na.value = "grey",
+  space = "lab",
+  midpoint = mean(countyIndices_withBinaries$employment)) +
+  geom_sf_label(aes(label = str_sub(NAME, 1, -18)), size = 5)  -> virginiaMapVulnerability
+
+
+countyIndices_withBinaries %>%
+  left_join(.,ShapeFiles) %>%
+  st_as_sf(.) %>% 
+  ggplot(aes(fill = Risk), color = "white") +
+  geom_sf() +
+  theme_minimal() +
+  labs(caption = "Counties shaded in white are located in the Best-Case and Prodigal Son quadrants.")+
+  scale_fill_manual(
+    name = "County Classification",
+    values= c("1" = muted("red"), "2" = muted("green")),
+    na.value = "white",
+    labels = c("2" = "Self-Made", "1" = "Worst-Case")) -> worstCaseSelfMadeMap
+
+```
+
+```{r ruralty}
+countyIndices_withBinaries %>% 
+  left_join(.,rucc, by = "GEOID") %>% 
+  mutate(rural = case_when(
+    rucc <= 4 ~ "0",
+    TRUE ~ "1")) %>% 
+  dplyr::select(-rucc) -> countyIndices_withBinaries_withRural
+```
+
+```{r filterSkillsByRisk}
+futureSkills <- readRDS("skills_future")[,c(1,3)] %>% 
+  dplyr::rename(future = 'Normalized Index')
+
+quad1Skills <- left_join(skills_by_county, quad1, by = "GEOID") %>%
+  group_by(skillname) %>% 
+  filter(!duplicated(GEOID)) %>%
+  ungroup() %>% 
+  na.omit() %>% 
+  dplyr::select(-c(index, employment))
+quad1Skills %>% pivot_wider(., id_cols = "GEOID", names_from = "skillname", values_from = "value") -> quad1skillswide
+
+quad2Skills <- left_join(skills_by_county, quad2, by = "GEOID") %>%
+  group_by(skillname) %>% 
+    filter(!duplicated(GEOID)) %>% 
+  na.omit() %>% 
+  ungroup() %>% 
+  dplyr::select(-c(index, employment)) 
+quad2Skills %>% pivot_wider(., id_cols = "GEOID", names_from = "skillname", values_from = "value") -> quad2skillswide
+
+
+quad3Skills <- left_join(skills_by_county, quad3, by = "GEOID") %>%
+  group_by(skillname) %>% 
+    filter(!duplicated(GEOID)) %>% 
+  na.omit() %>% 
+  ungroup() %>% 
+  dplyr::select(-c(index, employment)) 
+
+
+quad4Skills <- left_join(skills_by_county, quad4, by = "GEOID") %>%
+  group_by(skillname) %>% 
+    filter(!duplicated(GEOID)) %>% 
+  na.omit() %>% 
+  ungroup() %>% 
+  dplyr::select(-c(index, employment)) 
+
+
+skills_geo <- left_join(skills_by_county, countyIndices_withBinaries) %>% 
+  na.omit() 
+```
+
+```{r quad1quad2sigTesting}
+#Prepare matries for estimates, p-values, and names. 
+skilltest <- matrix(nrow = 35, ncol = 3)
+
+for (i in 2:36){
+  skillestimate  <- t.test(quad1skillswide[, i ], quad2skillswide[, i ], var.equal = TRUE)[["estimate"]]
+  pvalues <- t.test(quad1skillswide[, i ], quad2skillswide[, i ], var.equal = TRUE)[["p.value"]]
+  skilltest[i-1,1:2] <- skillestimate
+  skilltest[i-1,3] <- pvalues
+}
+colnames(skilltest) <- c("WorstCase", "SelfMade", "pvalues")
+
+skilltest %>% 
+  as.data.frame() %>% 
+  dplyr::mutate_if(is.numeric, round, digits = 3) %>% 
+  dplyr::mutate(SMadv = SelfMade - WorstCase) -> skillsDifferenceTesting
+
+allskills <- cbind(skillsDifferenceTesting, futureSkills) %>% 
+  dplyr::select(skillname, WorstCase, SelfMade, pvalues, SMadv, future)
+row.names(allskills) <- allskills$skillname
+
+futureSkills %>%
+  add_column(Empty_Column = 5) %>%
+  dplyr::rename("value" = "future",
+                "Risk" = "Empty_Column") -> futureSkillsRisk
+  
+sort(futureSkills$future) -> rankedFuture 
+as.matrix(rankedFuture) -> rankedMatrix
+colnames(rankedMatrix) <- "future"
+rankedMatrix %>% as.data.frame() -> rankedfutureSkills
+
+rankedfutureSkills %>% 
+  mutate(ranking = seq(from =1, to =35)) -> rankednumberedfutureskills
+
+futureSkills %>% 
+  left_join(.,rankednumberedfutureskills, by = "future") -> rankedSkillsfuture
+
+allSkills <- cbind(skillsDifferenceTesting, rankedSkillsfuture) %>% 
+  dplyr::select(c(skillname, SelfMade, WorstCase, SMadv, pvalues, ranking)) %>% 
+  dplyr::mutate_if(is.numeric, round, digits = 3)
+
+allSkills %>% 
+  dplyr::select(c(skillname, SMadv, ranking)) -> SMadvRanked
+
+SelfMadeSkillAdvantages <- allSkills %>% 
+  filter(SMadv >= 0,
+         pvalues <= .1) %>% 
+  dplyr::select(c(skillname, SelfMade, WorstCase, SMadv, pvalues, ranking)) 
+
+quad1Skills %>% 
+  group_by(skillname) %>% 
+  dplyr::mutate(quad1 = mean(value)) %>% 
+  dplyr::select(skillname, quad1) %>%
+  unique()-> quad1values
+
+quad2Skills %>% 
+  group_by(skillname) %>% 
+  dplyr::mutate(quad2 = mean(value)) %>% 
+  dplyr::select(skillname,quad2) %>%
+  unique()  -> quad2values
+
+quad3Skills %>% 
+  group_by(skillname) %>% 
+  dplyr::mutate(quad3 = mean(value)) %>% 
+  dplyr::select(skillname,quad3) %>%
+  unique() -> quad3values
+
+quad4Skills %>% 
+  group_by(skillname) %>% 
+  dplyr::mutate(quad4 = mean(value)) %>% 
+  dplyr::select(skillname,quad4) %>%
+  unique() -> quad4values
+
+
+skillstableAll <- cbind(quad1values, quad2values, quad3values, quad4values, futureSkills) %>% 
+  dplyr::select(c(9),quad1, quad2, quad3, quad4, future) %>% 
+  dplyr::rename(SkillName = c(1)) %>% 
+  dplyr::mutate_if(., is.numeric, round, digits = 3)
+
+skillstableAll %>% 
+  dplyr::rename("skillname" = "SkillName") %>% 
+  left_join(.,allSkills, by = "skillname") %>%
+  dplyr::select(skillname, SMadv, ranking, pvalues) %>% 
+  mutate(significance = case_when(pvalues <= 0.05 ~ "1",
+                                  TRUE ~ as.character(0))) -> SMadvRanked
+```
+
+```{r skillsPlot}
+theme_set(theme_minimal())
+
+SMadvRanked %>% 
+   ggplot(., aes(y=fct_reorder(skillname, ranking), x=SMadv)) + 
+    geom_point(size = 5, aes(colour = significance)) +
+    theme(axis.text.y = element_text(size = 12),
+          legend.position=c(0.25,0.9),
+          axis.title=element_text(size=12)) +
+  xlab("Comparative Advantage in Self-Made Counties") + 
+  ylab("Skill Name") +
+  labs(caption= "Skills are listed in order—top to bottom— of skill importance in Bright Outlook Occupations.") +
+  scale_colour_manual(
+    name="Statistical Significance",
+    labels=c("Significant at 95%",
+             "Not Significant"),
+    values = c("1" = "black", "0" = "grey75")) +
+  geom_vline(data = SMadvRanked, aes(color = "black", xintercept = as.numeric('0')))
+
+
+
+```
+
+```{r mapSkillsOfFuture}
+skills_by_county0 %>% 
+  filter(skillname == "ActiveListening") %>%
+  left_join(.,shapeFiles, by = "GEOID") -> ActiveListening
+
+ActiveListening %>% 
+  left_join(.,ShapeFiles) %>%
+  st_as_sf(.) %>% 
+  ggplot(aes(fill = value)) +
+  geom_sf() +
+  theme_minimal() +
+  scale_fill_gradient2(
+  name = "Active Listening",
+  low = muted("red"),
+  mid = "white",
+  high = muted("green"),
+  na.value = "grey",
+  space = "lab",
+  midpoint = mean(ActiveListening$value)) -> ALMap
+
+
+skills_by_county0 %>% 
+  filter(skillname == "Persuasion") %>%
+  left_join(.,shapeFiles, by = "GEOID") -> Persuasion
+
+Persuasion %>% 
+  left_join(.,ShapeFiles) %>%
+  st_as_sf(.) %>% 
+  ggplot(aes(fill = value)) +
+  geom_sf() +
+  theme_minimal() +
+  scale_fill_gradient2(
+  name = "Persuasion",
+  low = muted("red"),
+  mid = "white",
+  high = muted("green"),
+  na.value = "grey",
+  space = "lab",
+  midpoint = mean(Persuasion$value)) -> PMap
+
+skills_by_county0 %>% 
+  filter(skillname == "Programming") %>%
+  left_join(.,shapeFiles, by = "GEOID") ->Programming
+
+Programming %>% 
+  left_join(.,ShapeFiles) %>%
+  st_as_sf(.) %>% 
+  ggplot(aes(fill = value)) +
+  geom_sf() +
+  theme_minimal() +
+  scale_fill_gradient2(
+  name = "Programming",
+  low = muted("red"),
+  mid = "white",
+  high = muted("green"),
+  na.value = "grey",
+  space = "lab",
+  midpoint = mean(Programming$value)) -> PrMap
+
+```
+
+```{r PCAanalysis}
+RID2012stateBinaries <- readRDS("RID2012stateBinaries.Rds")
+
+RID2012stateBinaries[,6:25] %>% 
+  dplyr::select(-c(rural, 
+                   whiteCollar, 
+                   Construction,
+                   antiConstruction,
+                   antiHSorLess,
+                   antisingleParent)) -> PCAdataTotal
+
+pcor(PCAdataTotal)
+
+PCAcorr <- round(cor(PCAdataTotal), 1)
+
+p.mat <- cor_pmat(PCAdataTotal)
+
+corr.plot <- ggcorrplot(
+  PCAcorr, hc.order = TRUE, type = "lower", outline.col = "white", insig = "blank",
+  p.mat = p.mat)
+corr.plot
+
+index.pca <- prcomp(PCAdataTotal)
+
+plot(index.pca)
+
+biplot(index.pca)
+
+index.pca
+
+summary(index.pca)$importance %>% as.data.frame() -> PCAsummary
+
+PCAsummary %>% 
+  t() -> PCASummaryT
+
+PCASummaryT %>% 
+  as.data.frame() %>% 
+  mutate_if(., is.numeric, round, digits = 3) -> PCAsummary
+```
+
